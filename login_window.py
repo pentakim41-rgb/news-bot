@@ -6,11 +6,16 @@ login_window.py
 아이디/비밀번호 기억하기 기능 및 관리자모드 팝업창 기능이 포함되어 있습니다.
 """
 
+import os
+import subprocess
+import threading
 import tkinter as tk
+import webbrowser
 from tkinter import ttk, messagebox
 from auth_manager import GitHubDB, get_github_auth_config
 import admin_web
 import config_manager
+import updater
 
 
 class AdminLoginDialog(tk.Toplevel):
@@ -190,18 +195,37 @@ class LoginWindow(tk.Tk):
     def __init__(self, on_login_success_callback):
         super().__init__()
         self.title("로그인")
-        self.geometry("380x320")
+        self.geometry("380x430")
         self.resizable(False, False)
         self.on_login_success = on_login_success_callback
 
         self._build_ui()
         self._load_remembered_info()
+        threading.Thread(target=self._check_latest_version, daemon=True).start()
 
     def _build_ui(self):
         main_frame = ttk.Frame(self, padding=20)
         main_frame.pack(fill="both", expand=True)
 
-        ttk.Label(main_frame, text="🔑 AI 블로그 자동 생성기", font=("맑은 고딕", 14, "bold")).pack(pady=(0, 15))
+        ttk.Label(main_frame, text="🔑 AI 블로그 자동 생성기", font=("맑은 고딕", 14, "bold")).pack(pady=(0, 6))
+
+        # 버전 정보 (제목 바로 아래): 현재 버전 / 최신 버전 + 다운로드 버튼
+        ver_frame = ttk.Frame(main_frame)
+        ver_frame.pack(fill="x", pady=(0, 10))
+        ttk.Label(ver_frame, text=f"현재 버전  v{updater.APP_VERSION}").pack(anchor="w")
+        latest_row = ttk.Frame(ver_frame)
+        latest_row.pack(fill="x", pady=(2, 0))
+        self.latest_label = ttk.Label(latest_row, text="최신 버전  확인 중...")
+        self.latest_label.pack(side="left")
+        self.download_btn = ttk.Button(
+            latest_row, text="다운로드", width=10, state="disabled",
+            command=self._handle_download,
+        )
+        self.download_btn.pack(side="left", padx=(8, 0))
+        self.download_status = ttk.Label(ver_frame, text="", foreground="#666")
+        self.download_status.pack(anchor="w")
+        self._latest_info = None
+        self._downloading = False
 
         # 아이디 입력
         ttk.Label(main_frame, text="아이디").pack(anchor="w")
@@ -238,6 +262,90 @@ class LoginWindow(tk.Tk):
 
         admin_btn = ttk.Button(bottom_frame, text="⚙ 관리자모드", command=self._handle_admin_mode)
         admin_btn.pack(side="right")
+
+    # ---------- 버전 확인 / 다운로드 ----------
+    def _ui(self, func):
+        """백그라운드 스레드에서 안전하게 UI를 갱신한다 (창이 닫혔으면 무시)."""
+        try:
+            self.after(0, func)
+        except Exception:
+            pass
+
+    def _check_latest_version(self):
+        try:
+            info = updater.fetch_latest_release()
+        except Exception:
+            self._ui(lambda: self.latest_label.config(text="최신 버전  확인 실패 (인터넷 확인)"))
+            return
+
+        def apply():
+            self._latest_info = info
+            if updater.is_newer(info["version"]):
+                self.latest_label.config(text=f"최신 버전  v{info['version']}  (새 버전!)", foreground="#c0392b")
+            else:
+                self.latest_label.config(text=f"최신 버전  v{info['version']}  (최신입니다)", foreground="#27ae60")
+            self.download_btn.config(state="normal")
+
+        self._ui(apply)
+
+    def _handle_download(self):
+        info = self._latest_info
+        if not info or self._downloading:
+            return
+        if not info.get("asset_url"):
+            if messagebox.askyesno("다운로드", "이 릴리스에 다운로드 파일이 없습니다.\n릴리스 페이지를 브라우저로 열까요?"):
+                webbrowser.open(info.get("page") or updater.RELEASES_PAGE)
+            return
+        if not updater.is_newer(info["version"]):
+            if not messagebox.askyesno(
+                "다운로드", f"이미 최신 버전(v{updater.APP_VERSION})입니다.\n그래도 다시 받을까요?"
+            ):
+                return
+        size_mb = info.get("asset_size", 0) / 1048576
+        if not messagebox.askyesno(
+            "다운로드",
+            f"v{info['version']}을(를) 내려받습니다. (약 {size_mb:.0f}MB)\n"
+            f"저장 위치: {updater.default_download_dir()}\n\n계속할까요?",
+        ):
+            return
+
+        self._downloading = True
+        self.download_btn.config(state="disabled")
+        threading.Thread(target=self._download_worker, args=(info,), daemon=True).start()
+
+    def _download_worker(self, info):
+        def progress(done, total):
+            if total:
+                text = f"다운로드 중... {done * 100 // total}% ({done // 1048576}/{total // 1048576}MB)"
+            else:
+                text = f"다운로드 중... {done // 1048576}MB"
+            self._ui(lambda: self.download_status.config(text=text))
+
+        try:
+            path = updater.download_asset(info["asset_url"], info["asset_name"], progress=progress)
+        except Exception as e:
+            def fail():
+                self._downloading = False
+                self.download_btn.config(state="normal")
+                self.download_status.config(text="다운로드 실패")
+                messagebox.showerror("다운로드 실패", f"파일을 받지 못했습니다.\n{e}")
+            self._ui(fail)
+            return
+
+        def done():
+            self._downloading = False
+            self.download_btn.config(state="normal")
+            self.download_status.config(text="다운로드 완료")
+            messagebox.showinfo(
+                "다운로드 완료",
+                f"저장되었습니다.\n{path}\n\n압축을 풀어 새 폴더의 exe를 실행하세요.\n"
+                "(기존 config.json과 data 폴더는 새 폴더로 옮기면 설정이 유지됩니다.)",
+            )
+            try:
+                subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
+            except Exception:
+                pass
+        self._ui(done)
 
     def _load_remembered_info(self):
         """저장된 아이디/비밀번호가 있으면 입력창에 자동으로 채워줍니다."""
