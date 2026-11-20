@@ -75,6 +75,12 @@ _NON_NEWS_HOST = re.compile(
 _RELATIVE_TIME = re.compile(r"^((방금|초|분|시간|일|주|개월|년)|\d+\s*(초|분|시간|일|주|개월|년))\s*전$|^(어제|오늘|그저께)$")
 # 언론사명에 더해 도메인으로도 제외 여부를 판단 (Chosunbiz 처럼 영문 표기가 오는 경우)
 _EXCLUDE_HOST_KEYWORDS = ["chosun", "sbs.co.kr", "sbs.com"]
+# 한국어 기사만 사용 (제목에 한글이 한 글자도 없으면 외국어 기사로 보고 건너뜀)
+_HANGUL = re.compile(r"[가-힣]")
+
+
+def _is_korean_title(title: str) -> bool:
+    return bool(_HANGUL.search(title or ""))
 
 _COLLECT_NEWS_JS = """
 () => {
@@ -263,6 +269,9 @@ def _fetch_trend_news_rss(
             if picked >= news_per_trend:
                 break
             if n["url"] in seen:
+                continue
+            if not _is_korean_title(n["title"]):
+                log(f"[구글트렌드] 외국어 기사 제외: {n['title'][:40]} ({n['press']})")
                 continue
             seen.add(n["url"])
             collected.append(n)
@@ -462,6 +471,10 @@ def scrape_new_articles(
 
         press = _detect_press(url, item.get("press", ""))
         title = item.get("title", "").strip()
+        if not _is_korean_title(title):
+            log(f"[구글트렌드] 외국어 기사 제외: {title[:40] or url}")
+            seen_urls.add(url)
+            continue
         if _is_excluded(press, title, url):
             log(f"[구글트렌드] 제외 대상(조선/SBS) 스킵: {title} ({press})")
             seen_urls.add(url)
