@@ -1,0 +1,32 @@
+# --- 비밀정보 / 개인 설정 ---
+config.json
+config_*.json
+.env
+*.env
+*.pem
+*.key
+secrets*
+github_uploaded_log.json
+
+# --- 실행 결과물 ---
+data/
+*.log
+_test_*.txt
+_product.json
+Revert upload log*
+
+# --- 빌드 / 배포 산출물 ---
+build/
+dist/
+release/
+*.zip
+*.exe
+
+# --- 파이썬 ---
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# --- 개인 도구 설정 ---
+.claude/

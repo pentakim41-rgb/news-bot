@@ -1,0 +1,7 @@
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+Pillow>=10.0.0
+huggingface_hub>=0.28.0
+# 구글 트렌드 크롤링용 (설치 후 `playwright install chromium` 실행 필요)
+playwright>=1.40.0
+trafilatura>=1.6.0
